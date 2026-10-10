@@ -1,0 +1,60 @@
+// Prisma schema for Gold Loan Portal
+// Defines LoanScheme, Lead, and AgentSession
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model LoanScheme {
+  id                 String   @id // e.g., PLAN_BULLET_01, PLAN_EMI_01
+  name               String
+  interestRateAnnual Decimal  @map("interest_rate_annual") @db.Decimal(5, 2)
+  maxLtv             Decimal  @map("max_ltv") @db.Decimal(3, 2)
+  tenureMonths       Int      @map("tenure_months")
+  description        String
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  leads              Lead[]
+
+  @@map("loan_schemes")
+}
+
+model Lead {
+  id                 String      @id // Formatted Public ID: GL-1001, GL-1002, etc.
+  fullName           String      @map("full_name")
+  mobileNumber       String      @map("mobile_number") // Stored plain; masked in logs & admin responses
+  grossWeightGrams   Decimal     @map("gross_weight_grams") @db.Decimal(8, 2)
+  netWeightGrams     Decimal     @map("net_weight_grams") @db.Decimal(8, 2)
+  karat              Int
+  pureGoldGrams      Decimal     @map("pure_gold_grams") @db.Decimal(10, 4)
+  goldValuePaise     BigInt      @map("gold_value_paise") // Exact monetary integer in paise
+  eligibleLoanPaise  BigInt      @map("eligible_loan_paise") // Exact monetary integer in paise
+  selectedPlanId     String      @map("selected_plan_id")
+  selectedPlan       LoanScheme  @relation(fields: [selectedPlanId], references: [id])
+  status             String      @default("SUBMITTED")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  @@index([mobileNumber, createdAt])
+  @@index([selectedPlanId])
+  @@map("leads")
+}
+
+model AgentSession {
+  id                    String    @id @default(uuid())
+  messages              Json      @default("[]")
+  draftPayload          Json?     @map("draft_payload") // Authoritative pending application draft
+  draftVersion          Int       @default(1) @map("draft_version")
+  isConfirmed           Boolean   @default(false) @map("is_confirmed")
+  confirmedDraftVersion Int?      @map("confirmed_draft_version")
+  confirmedAt           DateTime? @map("confirmed_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@map("agent_sessions")
+}

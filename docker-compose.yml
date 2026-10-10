@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: gold_loan_portal_db
+    environment:
+      POSTGRES_USER: goldloan_dev
+      POSTGRES_PASSWORD: goldloan_dev_secret
+      POSTGRES_DB: gold_loan_portal
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goldloan_dev -d gold_loan_portal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
