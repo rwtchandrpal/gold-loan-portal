@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../../api/client.js';
 import { useDebounce } from '../../hooks/useDebounce.js';
 import type { LoanScheme, QuoteResponse } from '../../types/api.js';
@@ -11,6 +11,8 @@ interface Step2LiveQuoteProps {
   onUpdateWeights?: (gross: string, net: string, karat: number) => void;
   onNext: (selectedPlanId: string, quotes: Record<string, QuoteResponse>) => void;
   onBack: () => void;
+  initialSchemes?: LoanScheme[];
+  initialQuotes?: Record<string, QuoteResponse>;
 }
 
 export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
@@ -20,9 +22,15 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
   onUpdateWeights,
   onNext,
   onBack,
+  initialSchemes,
+  initialQuotes,
 }) => {
-  const [schemes, setSchemes] = useState<LoanScheme[]>([]);
-  const [loadingSchemes, setLoadingSchemes] = useState<boolean>(true);
+  const [schemes, setSchemes] = useState<LoanScheme[]>(() => {
+    return initialSchemes && initialSchemes.length > 0 ? initialSchemes : [];
+  });
+  const [loadingSchemes, setLoadingSchemes] = useState<boolean>(() => {
+    return !initialSchemes || initialSchemes.length === 0;
+  });
   const [schemesError, setSchemesError] = useState<string | null>(null);
 
   // Editable weight & karat state for instant responsiveness in Step 2
@@ -30,20 +38,50 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
   const [netWeight, setNetWeight] = useState<string>(applicantData.netWeightGrams);
   const [karat, setKarat] = useState<number>(applicantData.karat);
 
+  // Memoize weights object to prevent recreation on unrelated renders (BUG-05)
+  const weightsToDebounce = useMemo(
+    () => ({ grossWeight, netWeight, karat }),
+    [grossWeight, netWeight, karat]
+  );
   // Debounced weights object (~300 ms as required)
-  const debouncedWeights = useDebounce({ grossWeight, netWeight, karat }, 300);
+  const debouncedWeights = useDebounce(weightsToDebounce, 300);
 
-  // Quotes map stored by scheme ID
-  const [quotesByPlan, setQuotesByPlan] = useState<Record<string, QuoteResponse>>({});
+  // Quotes map stored by scheme ID (restores initial quotes immediately on back-navigation, BUG-07)
+  const [quotesByPlan, setQuotesByPlan] = useState<Record<string, QuoteResponse>>(() => {
+    if (initialQuotes && Object.keys(initialQuotes).length > 0) {
+      return initialQuotes;
+    }
+    return {};
+  });
   const [loadingQuotes, setLoadingQuotes] = useState<boolean>(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  // Track if initial quotes match current inputs to prevent redundant fetch on back-navigation
+  const initialQuoteWeightKey = useMemo(() => {
+    if (initialQuotes && Object.keys(initialQuotes).length > 0) {
+      return `${applicantData.grossWeightGrams}:${applicantData.netWeightGrams}:${applicantData.karat}`;
+    }
+    return '';
+  }, [applicantData.grossWeightGrams, applicantData.netWeightGrams, applicantData.karat, initialQuotes]);
+
+  const hasInitialRenderedQuotesRef = useRef<boolean>(
+    Boolean(initialQuotes && Object.keys(initialQuotes).length > 0)
+  );
 
   // Request counter to avoid race conditions
   const activeRequestIdRef = useRef<number>(0);
 
-  // 1. Fetch available active loan schemes on mount
+  // 1. Fetch available active loan schemes on mount if not already provided (BUG-06)
   useEffect(() => {
     let isMounted = true;
+
+    if (schemes.length > 0) {
+      if (!selectedPlanId && schemes.length > 0) {
+        onSelectPlan(schemes[0].id);
+      }
+      return;
+    }
+
     async function fetchSchemes() {
       try {
         setLoadingSchemes(true);
@@ -71,7 +109,18 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [schemes.length, selectedPlanId, onSelectPlan]);
+
+  // Synchronize schemes if initialSchemes arrives after initial mount
+  useEffect(() => {
+    if (initialSchemes && initialSchemes.length > 0 && schemes.length === 0) {
+      setSchemes(initialSchemes);
+      setLoadingSchemes(false);
+      if (!selectedPlanId) {
+        onSelectPlan(initialSchemes[0].id);
+      }
+    }
+  }, [initialSchemes, schemes.length, selectedPlanId, onSelectPlan]);
 
   // 2. Compute debounced live quotes for all schemes via backend API
   useEffect(() => {
@@ -96,6 +145,17 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
     if (schemes.length === 0) {
       return;
     }
+
+    const currentWeightKey = `${debouncedWeights.grossWeight}:${debouncedWeights.netWeight}:${debouncedWeights.karat}`;
+    if (
+      hasInitialRenderedQuotesRef.current &&
+      initialQuoteWeightKey === currentWeightKey &&
+      Object.keys(quotesByPlan).length > 0
+    ) {
+      hasInitialRenderedQuotesRef.current = false;
+      return;
+    }
+    hasInitialRenderedQuotesRef.current = false;
 
     const requestId = ++activeRequestIdRef.current;
     let isMounted = true;
@@ -149,15 +209,21 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [debouncedWeights, schemes]);
+  }, [debouncedWeights, schemes, initialQuoteWeightKey]);
 
   // Derive valuation numbers from active quote (or first available)
   const currentQuote = quotesByPlan[selectedPlanId] || Object.values(quotesByPlan)[0];
 
   const handleProceed = () => {
     if (selectedPlanId && quotesByPlan[selectedPlanId]) {
+      onUpdateWeights?.(grossWeight, netWeight, karat);
       onNext(selectedPlanId, quotesByPlan);
     }
+  };
+
+  const handleBack = () => {
+    onUpdateWeights?.(grossWeight, netWeight, karat);
+    onBack();
   };
 
   return (
@@ -392,7 +458,7 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
         <button
           type="button"
           id="back-to-step1-btn"
-          onClick={onBack}
+          onClick={handleBack}
           className="flex-1 py-3 px-4 rounded-xl border border-slate-300 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors cursor-pointer"
         >
           ← Edit Details

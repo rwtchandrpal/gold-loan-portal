@@ -43,6 +43,13 @@ export const App: React.FC = () => {
   }, []);
 
   const handleStep1Next = (data: Step1FormData) => {
+    if (
+      data.grossWeightGrams !== formData.grossWeightGrams ||
+      data.netWeightGrams !== formData.netWeightGrams ||
+      data.karat !== formData.karat
+    ) {
+      setQuotes({});
+    }
     setFormData(data);
     setCurrentStep(2);
   };
@@ -83,41 +90,45 @@ export const App: React.FC = () => {
       <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6 sm:px-6">
-        {activeTab === 'apply' ? (
-          <div className="space-y-4">
-            <StepIndicator currentStep={currentStep} />
+        <div className={activeTab === 'apply' ? 'space-y-4' : 'hidden'} aria-hidden={activeTab !== 'apply'}>
+          <StepIndicator currentStep={currentStep} />
 
-            {currentStep === 1 && (
-              <Step1Details
-                initialData={formData}
-                onNext={handleStep1Next}
-              />
-            )}
+          {currentStep === 1 && (
+            <Step1Details
+              initialData={formData}
+              onNext={handleStep1Next}
+            />
+          )}
 
-            {currentStep === 2 && (
-              <Step2LiveQuote
-                applicantData={formData}
-                selectedPlanId={selectedPlanId}
-                onSelectPlan={setSelectedPlanId}
-                onUpdateWeights={handleUpdateWeights}
-                onNext={handleStep2Next}
-                onBack={() => setCurrentStep(1)}
-              />
-            )}
+          {currentStep === 2 && (
+            <Step2LiveQuote
+              applicantData={formData}
+              selectedPlanId={selectedPlanId}
+              initialSchemes={schemes}
+              initialQuotes={quotes}
+              onSelectPlan={setSelectedPlanId}
+              onUpdateWeights={handleUpdateWeights}
+              onNext={handleStep2Next}
+              onBack={() => setCurrentStep(1)}
+            />
+          )}
 
-            {currentStep === 3 && (
-              <Step3Confirm
-                applicantData={formData}
-                selectedScheme={selectedScheme}
-                quote={selectedQuote}
-                onBack={() => setCurrentStep(2)}
-                onReset={handleReset}
-              />
-            )}
-          </div>
-        ) : activeTab === 'chat' ? (
+          {currentStep === 3 && (
+            <Step3Confirm
+              applicantData={formData}
+              selectedScheme={selectedScheme}
+              quote={selectedQuote}
+              onBack={() => setCurrentStep(2)}
+              onReset={handleReset}
+            />
+          )}
+        </div>
+
+        <div className={activeTab === 'chat' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'chat'}>
           <AgentChatPanel />
-        ) : (
+        </div>
+
+        {activeTab === 'admin' && (
           <AdminLeadsView />
         )}
       </main>

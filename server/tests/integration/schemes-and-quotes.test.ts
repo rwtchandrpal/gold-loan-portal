@@ -188,5 +188,20 @@ describe('REST API: Schemes & Quotes (Phase 3)', () => {
       expect(res.body.error.code).toBe('PLAN_NOT_FOUND');
       expect(res.body.error.message).toContain('PLAN_NONEXISTENT_99');
     });
+
+    it('returns 400 MALFORMED_JSON when request body contains invalid JSON', async () => {
+      const res = await request(app)
+        .post('/api/v1/quotes')
+        .set('Content-Type', 'application/json')
+        .send('{"grossWeightGrams": 50, "netWeightGrams": 45, "karat": invalid');
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: {
+          code: 'MALFORMED_JSON',
+          message: 'Malformed JSON payload in request body',
+        },
+      });
+    });
   });
 });

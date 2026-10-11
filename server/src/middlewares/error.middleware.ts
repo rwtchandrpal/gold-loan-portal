@@ -15,7 +15,22 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  // 1. Handle known DuplicateApplicationError (409)
+  // 1. Handle body-parser malformed JSON SyntaxError (400)
+  if (
+    (err instanceof SyntaxError || err?.type === 'entity.parse.failed') &&
+    (err?.status === 400 || err?.statusCode === 400) &&
+    'body' in err
+  ) {
+    res.status(400).json({
+      error: {
+        code: 'MALFORMED_JSON',
+        message: 'Malformed JSON payload in request body',
+      },
+    });
+    return;
+  }
+
+  // 2. Handle known DuplicateApplicationError (409)
   if (err instanceof DuplicateApplicationError) {
     res.status(err.statusCode).json({
       error: {

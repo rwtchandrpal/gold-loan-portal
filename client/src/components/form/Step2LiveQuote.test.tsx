@@ -168,4 +168,116 @@ describe('Step2LiveQuote Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /Edit Details/i }));
     expect(handleBack).toHaveBeenCalledTimes(1);
   });
+
+  it('BUG-06: reuses preloaded initialSchemes, avoids duplicate getLoanSchemes call and skeleton flicker', async () => {
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    // Initial schemes must be rendered immediately
+    expect(screen.getByText(/Bullet Repayment Scheme/i)).toBeInTheDocument();
+    expect(screen.getByText(/Monthly EMI Scheme/i)).toBeInTheDocument();
+
+    // Verify scheme radiogroup is immediately visible without loading skeletons
+    const radiogroup = screen.getByRole('radiogroup', { name: /Loan Schemes/i });
+    expect(radiogroup).toBeInTheDocument();
+    expect(radiogroup.querySelectorAll('.animate-pulse')).toHaveLength(0);
+
+    // Verify api.getLoanSchemes was NOT called because initialSchemes were provided
+    expect(api.getLoanSchemes).not.toHaveBeenCalled();
+
+    // Wait for initial quote calculation to settle
+    await waitFor(() => {
+      expect(screen.getByText('₹2,16,562')).toBeInTheDocument();
+    });
+  });
+
+  it('BUG-06: preserves error state when initial scheme loading genuinely fails', async () => {
+    (api.getLoanSchemes as any).mockRejectedValueOnce(new Error('Network error loading schemes'));
+
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network error loading schemes/i)).toBeInTheDocument();
+    });
+  });
+
+  it('BUG-07: restores existing quotes without loading flash when returning from Step 3 with unchanged inputs', async () => {
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    // Quote values must be present immediately
+    expect(screen.getByText('41.2500 g')).toBeInTheDocument();
+    expect(screen.getByText('₹2,88,750')).toBeInTheDocument();
+    expect(screen.getByText('₹2,16,562')).toBeInTheDocument();
+
+    // Quote loading indicator must NOT be shown
+    expect(document.querySelector('#quote-loading-badge')).not.toBeInTheDocument();
+
+    // api.getQuote must NOT be called on mount because quotes already match inputs
+    expect(api.getQuote).not.toHaveBeenCalled();
+  });
+
+  it('BUG-07: recalculates quote when weight inputs change in Step 2', async () => {
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    expect(api.getQuote).not.toHaveBeenCalled();
+
+    // Change net weight
+    const netInput = screen.getByLabelText(/Net \(g\)/i);
+    fireEvent.change(netInput, { target: { value: '40.00' } });
+
+    await waitFor(
+      () => {
+        expect(api.getQuote).toHaveBeenCalledWith(
+          expect.objectContaining({
+            netWeightGrams: 40,
+            grossWeightGrams: 50,
+            karat: 22,
+          })
+        );
+      },
+      { timeout: 1500 }
+    );
+  });
 });

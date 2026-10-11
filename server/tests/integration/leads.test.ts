@@ -108,6 +108,21 @@ describe('REST API: Leads Management (Phase 3)', () => {
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe('PLAN_NOT_FOUND');
     });
+
+    it('returns 400 MALFORMED_JSON when request body contains invalid JSON', async () => {
+      const res = await request(app)
+        .post('/api/v1/leads')
+        .set('Content-Type', 'application/json')
+        .send('{"fullName": "Priya Sharma", "mobileNumber": 9876543210, "grossWeightGrams": invalid');
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: {
+          code: 'MALFORMED_JSON',
+          message: 'Malformed JSON payload in request body',
+        },
+      });
+    });
   });
 
   describe('POST /api/v1/leads - Creation, Sequence IDs & Recalculation', () => {
