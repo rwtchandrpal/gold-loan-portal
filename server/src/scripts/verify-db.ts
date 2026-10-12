@@ -30,12 +30,20 @@ async function main() {
   console.log('\nSequences in public schema:');
   console.table(seqRes.rows);
 
-  // 4. Test sequence nextval
-  const nextValRes = await pool.query("SELECT nextval('lead_application_id_seq') AS sample_nextval");
-  console.log('Sample sequence nextval:', nextValRes.rows[0].sample_nextval);
-  // Reset sequence back to 1001 so tests/leads start at 1001
-  await pool.query("ALTER SEQUENCE lead_application_id_seq RESTART WITH 1001");
-  console.log('Sequence reset back to 1001');
+  // 4. Inspect current sequence state
+  const seqStatus = await pool.query("SELECT last_value, is_called FROM lead_application_id_seq");
+  console.log('Current sequence state:', seqStatus.rows[0]);
+
+  // Ensure sequence is safely ahead of any existing lead IDs to prevent primary key collisions
+  const maxLeadRes = await pool.query("SELECT MAX(CAST(SUBSTRING(id FROM 4) AS BIGINT)) AS max_id FROM leads WHERE id LIKE 'GL-%'");
+  const maxLeadId = maxLeadRes.rows[0]?.max_id ? Number(maxLeadRes.rows[0].max_id) : 1000;
+  const currentVal = Number(seqStatus.rows[0].last_value);
+  if (currentVal <= maxLeadId) {
+    await pool.query(`SELECT setval('lead_application_id_seq', ${maxLeadId})`);
+    console.log(`Sequence synchronized to ${maxLeadId} (nextval will be ${maxLeadId + 1})`);
+  } else {
+    console.log(`Sequence is ahead at ${currentVal} (nextval will be ${currentVal + 1})`);
+  }
 
   // 5. Loan Schemes seeded
   const schemes = await prisma.loanScheme.findMany({

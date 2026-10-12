@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { ChatMessage, AgentToolCallItem } from '../../types/api.js';
+import { MarkdownContent } from './MarkdownContent.js';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -55,7 +56,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             : 'bg-white text-slate-800 border border-slate-200/90 rounded-bl-xs'
         }`}
       >
-        <div className="whitespace-pre-wrap break-words">{message.content}</div>
+        {isUser ? (
+          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+        ) : (
+          <MarkdownContent content={message.content} />
+        )}
 
         {/* Tool execution badges */}
         {message.toolCallsExecuted && message.toolCallsExecuted.length > 0 && (

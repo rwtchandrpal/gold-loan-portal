@@ -251,7 +251,8 @@ describe('App Component Integration', () => {
       expect(api.getQuote).toHaveBeenCalledWith(
         expect.objectContaining({
           netWeightGrams: 30,
-        })
+        }),
+        expect.any(AbortSignal)
       );
     });
   });

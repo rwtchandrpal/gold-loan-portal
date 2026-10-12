@@ -49,11 +49,12 @@ export const api = {
   /**
    * Calculates live gold loan quote.
    */
-  async getQuote(req: QuoteRequest): Promise<QuoteResponse> {
+  async getQuote(req: QuoteRequest, signal?: AbortSignal): Promise<QuoteResponse> {
     const res = await fetch('/api/v1/quotes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
+      signal,
     });
     return handleResponse<QuoteResponse>(res);
   },

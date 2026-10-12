@@ -129,6 +129,9 @@ export async function executeToolCall(
     case 'calculate_quote': {
       const parseResult = calculateQuoteToolSchema.safeParse(rawArgs);
       if (!parseResult.success) {
+        if (sessionId) {
+          await SessionService.invalidateConfirmation(sessionId);
+        }
         return {
           success: false,
           error: 'VALIDATION_ERROR',
@@ -160,6 +163,15 @@ export async function executeToolCall(
       // Check existing draft plan selection if user had already chosen a scheme
       const existingSession = await SessionService.getOrCreateSession(sessionId);
       const existingDraft = (existingSession.draftPayload as any) || {};
+
+      if (existingDraft.applicationId) {
+        return {
+          success: false,
+          error: 'APPLICATION_ALREADY_SUBMITTED',
+          message: `Application ${existingDraft.applicationId} has already been submitted and cannot be modified.`,
+        };
+      }
+
       const activePlanId = existingDraft.selectedPlanId;
       const quoteForActivePlan = activePlanId === 'PLAN_BULLET_01' ? bulletQuote : emiQuote;
 
@@ -208,27 +220,11 @@ export async function executeToolCall(
           if (typeof rawArgs.karat === 'number') candidateUpdate.karat = rawArgs.karat;
 
           if (Object.keys(candidateUpdate).length > 0) {
-            if (
-              candidateUpdate.netWeightGrams &&
-              candidateUpdate.grossWeightGrams &&
-              candidateUpdate.karat &&
-              candidateUpdate.selectedPlanId
-            ) {
-              try {
-                const q = QuoteService.calculateQuote({
-                  netWeightGrams: candidateUpdate.netWeightGrams,
-                  grossWeightGrams: candidateUpdate.grossWeightGrams,
-                  karat: candidateUpdate.karat,
-                  selectedPlanId: candidateUpdate.selectedPlanId,
-                });
-                candidateUpdate.pureGoldGrams = q.pureGoldGrams;
-                candidateUpdate.goldValueRupees = q.goldValueRupees;
-                candidateUpdate.eligibleLoanRupees = q.eligibleLoanRupees;
-              } catch {
-                // Quote validation errors handled downstream
-              }
+            try {
+              await SessionService.updateDraft(sessionId, candidateUpdate);
+            } catch {
+              // Ignore validation errors on candidate update
             }
-            await SessionService.updateDraft(sessionId, candidateUpdate);
           }
         }
 
@@ -240,8 +236,60 @@ export async function executeToolCall(
         };
       }
 
-      // 2. Validate payload
-      const parseResult = leadCreationSchema.safeParse(rawArgs);
+      // Retrieve confirmed draft
+      const session = await SessionService.getOrCreateSession(sessionId);
+      const currentDraft = (session.draftPayload as any) || {};
+
+      // 2. Verify submitted arguments match the confirmed draft payload
+      const checkFields = [
+        'fullName',
+        'mobileNumber',
+        'grossWeightGrams',
+        'netWeightGrams',
+        'karat',
+        'selectedPlanId',
+      ] as const;
+
+      for (const field of checkFields) {
+        if (
+          rawArgs &&
+          typeof rawArgs === 'object' &&
+          rawArgs[field] !== undefined &&
+          rawArgs[field] !== currentDraft[field]
+        ) {
+          return {
+            success: false,
+            error: 'CONFIRMATION_REQUIRED',
+            message: `Submitted field '${field}' (${rawArgs[field]}) does not match the confirmed draft value (${currentDraft[field]}). Please review the Confirmation Card and click "Confirm & Submit" on screen.`,
+          };
+        }
+      }
+
+      // Check if this session draft was already submitted
+      if (currentDraft.applicationId) {
+        return {
+          success: true,
+          applicationId: currentDraft.applicationId,
+          status: currentDraft.status || 'SUBMITTED',
+          fullName: currentDraft.fullName,
+          pureGoldGrams: currentDraft.pureGoldGrams,
+          eligibleLoanRupees: currentDraft.eligibleLoanRupees,
+          createdAt: currentDraft.submittedAt || new Date().toISOString(),
+          message: `Application submitted successfully! Your application ID is ${currentDraft.applicationId}.`,
+        };
+      }
+
+      const payloadToValidate = {
+        fullName: rawArgs?.fullName ?? currentDraft.fullName,
+        mobileNumber: rawArgs?.mobileNumber ?? currentDraft.mobileNumber,
+        grossWeightGrams: rawArgs?.grossWeightGrams ?? currentDraft.grossWeightGrams,
+        netWeightGrams: rawArgs?.netWeightGrams ?? currentDraft.netWeightGrams,
+        karat: rawArgs?.karat ?? currentDraft.karat,
+        selectedPlanId: rawArgs?.selectedPlanId ?? currentDraft.selectedPlanId,
+      };
+
+      // 3. Validate payload with schema
+      const parseResult = leadCreationSchema.safeParse(payloadToValidate);
       if (!parseResult.success) {
         return {
           success: false,
@@ -254,23 +302,7 @@ export async function executeToolCall(
         };
       }
 
-      // Check if this session draft was already submitted
-      const session = await SessionService.getOrCreateSession(sessionId);
-      const currentDraft = (session.draftPayload as any) || {};
-      if (currentDraft.applicationId) {
-        return {
-          success: true,
-          applicationId: currentDraft.applicationId,
-          status: currentDraft.status || 'SUBMITTED',
-          fullName: currentDraft.fullName || parseResult.data.fullName,
-          pureGoldGrams: currentDraft.pureGoldGrams,
-          eligibleLoanRupees: currentDraft.eligibleLoanRupees,
-          createdAt: currentDraft.submittedAt || new Date().toISOString(),
-          message: `Application submitted successfully! Your application ID is ${currentDraft.applicationId}.`,
-        };
-      }
-
-      // 3. Submit lead through single authority LeadService
+      // 4. Submit lead through single authority LeadService
       try {
         const lead = await LeadService.createLead(parseResult.data);
         await SessionService.updateDraft(sessionId, {

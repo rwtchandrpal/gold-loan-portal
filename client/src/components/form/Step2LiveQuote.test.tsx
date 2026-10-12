@@ -274,10 +274,179 @@ describe('Step2LiveQuote Component', () => {
             netWeightGrams: 40,
             grossWeightGrams: 50,
             karat: 22,
-          })
+          }),
+          expect.any(AbortSignal)
         );
       },
       { timeout: 1500 }
     );
+  });
+
+  it('BUG-01: clears stale quote, shows error, and disables Review & Confirm when net weight is cleared', async () => {
+    const handleNext = vi.fn();
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={handleNext}
+        onBack={vi.fn()}
+      />
+    );
+
+    const proceedBtn = screen.getByRole('button', { name: /Review & Confirm/i });
+    expect(proceedBtn).not.toBeDisabled();
+
+    // Clear net weight
+    const netInput = screen.getByLabelText(/Net \(g\)/i);
+    fireEvent.change(netInput, { target: { value: '' } });
+
+    // Review & Confirm must be immediately disabled
+    expect(proceedBtn).toBeDisabled();
+
+    // Validation error must appear
+    expect(document.querySelector('#step2-net-error')).toHaveTextContent(/Net weight is required/i);
+
+    // Stale valuation numbers must NOT be shown
+    expect(screen.queryByText('₹2,88,750')).not.toBeInTheDocument();
+
+    // Clicking button cannot submit or progress
+    fireEvent.click(proceedBtn);
+    expect(handleNext).not.toHaveBeenCalled();
+  });
+
+  it('BUG-01: prevents progression and shows error when net weight exceeds gross weight', async () => {
+    const handleNext = vi.fn();
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={handleNext}
+        onBack={vi.fn()}
+      />
+    );
+
+    const proceedBtn = screen.getByRole('button', { name: /Review & Confirm/i });
+    expect(proceedBtn).not.toBeDisabled();
+
+    // Set net weight to 55g (greater than gross 50g)
+    const netInput = screen.getByLabelText(/Net \(g\)/i);
+    fireEvent.change(netInput, { target: { value: '55.00' } });
+
+    // Progression must be blocked immediately
+    expect(proceedBtn).toBeDisabled();
+
+    // Field-level error must appear
+    expect(document.querySelector('#step2-net-error')).toHaveTextContent(/Net weight cannot exceed gross weight/i);
+
+    // Stale valuation must be cleared
+    expect(screen.queryByText('₹2,88,750')).not.toBeInTheDocument();
+
+    fireEvent.click(proceedBtn);
+    expect(handleNext).not.toHaveBeenCalled();
+  });
+
+  it('BUG-01: rejects zero and out-of-range weights', async () => {
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    const grossInput = screen.getByLabelText(/Gross \(g\)/i);
+    fireEvent.change(grossInput, { target: { value: '0' } });
+
+    expect(document.querySelector('#step2-gross-error')).toHaveTextContent(/Gross weight must be greater than 0 grams/i);
+    expect(screen.getByRole('button', { name: /Review & Confirm/i })).toBeDisabled();
+
+    // Change to > 1000g
+    fireEvent.change(grossInput, { target: { value: '1200' } });
+    expect(document.querySelector('#step2-gross-error')).toHaveTextContent(/Gross weight cannot exceed 1000 grams/i);
+    expect(screen.getByRole('button', { name: /Review & Confirm/i })).toBeDisabled();
+  });
+
+  it('BUG-01: restores quote and re-enables Review & Confirm when invalid inputs are corrected', async () => {
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        initialQuotes={{
+          PLAN_BULLET_01: mockQuoteBullet,
+          PLAN_EMI_01: mockQuoteEMI,
+        }}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    const proceedBtn = screen.getByRole('button', { name: /Review & Confirm/i });
+    const netInput = screen.getByLabelText(/Net \(g\)/i);
+
+    // Break inputs: net 60g > gross 50g
+    fireEvent.change(netInput, { target: { value: '60.00' } });
+    expect(proceedBtn).toBeDisabled();
+
+    // Correct inputs: net 42.00g
+    fireEvent.change(netInput, { target: { value: '42.00' } });
+
+    // Wait for debounced quote calculation to succeed
+    await waitFor(() => {
+      expect(proceedBtn).not.toBeDisabled();
+      expect(screen.getByText('₹2,16,562')).toBeInTheDocument();
+    });
+  });
+
+  it('BUG-01 & BUG-08: displays API quote failure and recovers via Retry Quote Calculation button', async () => {
+    (api.getQuote as any).mockRejectedValueOnce(new Error('Market valuation service unavailable'));
+
+    render(
+      <Step2LiveQuote
+        applicantData={initialApplicantData}
+        selectedPlanId="PLAN_EMI_01"
+        initialSchemes={mockSchemes}
+        onSelectPlan={vi.fn()}
+        onNext={vi.fn()}
+        onBack={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Market valuation service unavailable/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Retry Quote Calculation/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Review & Confirm/i })).toBeDisabled();
+    });
+
+    // Mock successful recovery
+    (api.getQuote as any).mockResolvedValue(mockQuoteEMI);
+
+    // Click Retry
+    fireEvent.click(screen.getByRole('button', { name: /Retry Quote Calculation/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Market valuation service unavailable/i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Review & Confirm/i })).not.toBeDisabled();
+    });
   });
 });

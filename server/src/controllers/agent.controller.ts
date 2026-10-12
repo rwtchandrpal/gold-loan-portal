@@ -14,37 +14,63 @@ export const confirmRequestSchema = z.object({
   draftVersion: z.number({ invalid_type_error: 'Draft version must be a number' }).int().positive(),
 });
 
-export function extractApplicantDetailsFromText(text: string): Record<string, any> {
-  const extracted: Record<string, any> = {};
+export interface ExtractedDetailsResult {
+  details: Record<string, any>;
+  isCorrection: boolean;
+  invalidReason?: string;
+}
 
-  // Name match: e.g. "My name is Rajesh Patel", "Name: Rajesh Patel", "Applicant: Rajesh Patel"
+export function extractApplicantDetailsFromText(
+  text: string,
+  currentDraft?: Record<string, any>
+): ExtractedDetailsResult {
+  const details: Record<string, any> = {};
+  let isCorrection = false;
+  let invalidReason: string | undefined;
+
+  // Name match: e.g. "My name is Rajesh Patel", "Name: Rajesh Patel", "Name Rajesh Patel", "Applicant: Rajesh Patel"
   const nameMatch =
-    text.match(/(?:my name is|name is|name:|applicant is|applicant full name is|i am)\s+([a-zA-Z]{2,30}(?:\s+[a-zA-Z]{2,30}){0,3})/i);
+    text.match(/(?:my name is|name is|name:|name|applicant is|applicant full name is|applicant:|applicant|i am|change name to|update name to)\s+([a-zA-Z]{2,30}(?:\s+[a-zA-Z]{2,30}){0,3})/i);
   if (nameMatch && nameMatch[1]) {
     const rawName = nameMatch[1].trim();
-    const disallowed = ['a', 'the', 'interested', 'applying', 'looking', 'here'];
+    const disallowed = ['a', 'the', 'interested', 'applying', 'looking', 'here', 'ready'];
     if (rawName.length >= 2 && rawName.length <= 60 && !disallowed.includes(rawName.toLowerCase())) {
-      extracted.fullName = rawName;
+      details.fullName = rawName;
+      if (text.match(/change|update|actually|correct/i)) isCorrection = true;
     }
   }
 
   // Mobile match: 10 Indian digits starting with 6-9
   const mobileMatch = text.match(/\b([6-9]\d{9})\b/);
   if (mobileMatch && mobileMatch[1]) {
-    extracted.mobileNumber = mobileMatch[1];
+    details.mobileNumber = mobileMatch[1];
+    if (text.match(/change|update|actually|correct/i)) isCorrection = true;
+  } else if (text.match(/mobile\s*(?:is|to|:)\s*(\d+)/i)) {
+    const rawMobile = text.match(/mobile\s*(?:is|to|:)\s*(\d+)/i)![1];
+    if (rawMobile.length !== 10 || !/^[6-9]/.test(rawMobile)) {
+      invalidReason = 'Mobile number must be a 10-digit Indian number starting with 6, 7, 8, or 9';
+    }
   }
 
   // Scheme match: PLAN_EMI_01 or PLAN_BULLET_01 or "monthly emi" or "bullet"
-  const planCodeMatch = text.match(/\b(PLAN_EMI_01|PLAN_BULLET_01)\b/i);
-  if (planCodeMatch) {
-    extracted.selectedPlanId = planCodeMatch[1].toUpperCase();
-  } else if (/monthly emi|emi scheme|emi plan/i.test(text)) {
-    extracted.selectedPlanId = 'PLAN_EMI_01';
-  } else if (/bullet repayment|bullet scheme|bullet plan/i.test(text)) {
-    extracted.selectedPlanId = 'PLAN_BULLET_01';
+  // Do not treat pure inquiries ("show me the EMI option", "tell me about", "which scheme has a lower interest rate") as confirmed selections
+  const isSchemeInquiry = /(?:which scheme|which plan|what scheme|what plan|show me|tell me|explain|info on|details of|compare|lower interest|lowest interest|the other|other scheme|other plan|switch)/i.test(text);
+
+  if (!isSchemeInquiry) {
+    const planCodeMatch = text.match(/\b(PLAN_EMI_01|PLAN_BULLET_01)\b/i);
+    if (planCodeMatch) {
+      details.selectedPlanId = planCodeMatch[1].toUpperCase();
+      if (text.match(/change|update|switch|actually/i)) isCorrection = true;
+    } else if (/monthly emi|emi scheme|emi plan/i.test(text) || /(?:want|choose|select|opt for)\s*(?:the\s*)?emi/i.test(text)) {
+      details.selectedPlanId = 'PLAN_EMI_01';
+      if (text.match(/change|update|switch|actually/i)) isCorrection = true;
+    } else if (/bullet repayment|bullet scheme|bullet plan/i.test(text) || /(?:want|choose|select|opt for)\s*(?:the\s*)?bullet/i.test(text)) {
+      details.selectedPlanId = 'PLAN_BULLET_01';
+      if (text.match(/change|update|switch|actually/i)) isCorrection = true;
+    }
   }
 
-  return extracted;
+  return { details, isCorrection, invalidReason };
 }
 
 export async function handleAgentChat(
@@ -57,11 +83,78 @@ export async function handleAgentChat(
 
     // 1. Retrieve or create session
     const session = await SessionService.getOrCreateSession(sessionId);
+    const currentDraft = (session.draftPayload as any) || {};
 
-    // Ingest any applicant details directly present in the user message
-    const extractedDetails = extractApplicantDetailsFromText(message);
-    if (Object.keys(extractedDetails).length > 0) {
-      await SessionService.updateDraft(session.id, extractedDetails);
+    // Invariant: Once an application is submitted, it is finalized and immutable
+    if (currentDraft.applicationId) {
+      if (
+        message.match(/actually|change|update|correct|net|gross|karat|plan|scheme|name|mobile/i)
+      ) {
+        const reply = `Your application (${currentDraft.applicationId}) has already been submitted and cannot be modified. If you need any assistance, please contact our support team.`;
+        await SessionService.appendMessages(session.id, [
+          { role: 'user', content: message, timestamp: new Date().toISOString() },
+          { role: 'model', content: reply, timestamp: new Date().toISOString() },
+        ]);
+        res.status(200).json({
+          sessionId: session.id,
+          reply,
+          draft: session.draftPayload,
+          draftVersion: session.draftVersion,
+          isConfirmed: session.isConfirmed,
+          toolCallsExecuted: [],
+        });
+        return;
+      }
+    }
+
+    // Ingest any applicant details or corrections directly present in user message
+    const extraction = extractApplicantDetailsFromText(message, currentDraft);
+
+    if (extraction.invalidReason) {
+      // Invalidate confirmation if session was confirmed, but DO NOT corrupt stored draft details
+      if (session.isConfirmed) {
+        await SessionService.invalidateConfirmation(session.id);
+      }
+      const updatedSession = await SessionService.getOrCreateSession(session.id);
+      const reply = `Validation error: ${extraction.invalidReason}. Please provide a valid value to continue.`;
+      await SessionService.appendMessages(session.id, [
+        { role: 'user', content: message, timestamp: new Date().toISOString() },
+        { role: 'model', content: reply, timestamp: new Date().toISOString() },
+      ]);
+      res.status(200).json({
+        sessionId: updatedSession.id,
+        reply,
+        draft: updatedSession.draftPayload,
+        draftVersion: updatedSession.draftVersion,
+        isConfirmed: updatedSession.isConfirmed,
+        toolCallsExecuted: [],
+      });
+      return;
+    }
+
+    if (Object.keys(extraction.details).length > 0) {
+      try {
+        await SessionService.updateDraft(session.id, extraction.details);
+      } catch (err: any) {
+        if (session.isConfirmed) {
+          await SessionService.invalidateConfirmation(session.id);
+        }
+        const updatedSession = await SessionService.getOrCreateSession(session.id);
+        const reply = `Validation error: ${err.message}. Please check your details and try again.`;
+        await SessionService.appendMessages(session.id, [
+          { role: 'user', content: message, timestamp: new Date().toISOString() },
+          { role: 'model', content: reply, timestamp: new Date().toISOString() },
+        ]);
+        res.status(200).json({
+          sessionId: updatedSession.id,
+          reply,
+          draft: updatedSession.draftPayload,
+          draftVersion: updatedSession.draftVersion,
+          isConfirmed: updatedSession.isConfirmed,
+          toolCallsExecuted: [],
+        });
+        return;
+      }
     }
 
     // 2. Obtain agent instance

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.js';
-import { useDebounce } from '../../hooks/useDebounce.js';
+import { useQuotes } from '../../hooks/useQuotes.js';
 import type { LoanScheme, QuoteResponse } from '../../types/api.js';
 import type { Step1FormData } from './Step1Details.js';
 
@@ -38,39 +38,6 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
   const [netWeight, setNetWeight] = useState<string>(applicantData.netWeightGrams);
   const [karat, setKarat] = useState<number>(applicantData.karat);
 
-  // Memoize weights object to prevent recreation on unrelated renders (BUG-05)
-  const weightsToDebounce = useMemo(
-    () => ({ grossWeight, netWeight, karat }),
-    [grossWeight, netWeight, karat]
-  );
-  // Debounced weights object (~300 ms as required)
-  const debouncedWeights = useDebounce(weightsToDebounce, 300);
-
-  // Quotes map stored by scheme ID (restores initial quotes immediately on back-navigation, BUG-07)
-  const [quotesByPlan, setQuotesByPlan] = useState<Record<string, QuoteResponse>>(() => {
-    if (initialQuotes && Object.keys(initialQuotes).length > 0) {
-      return initialQuotes;
-    }
-    return {};
-  });
-  const [loadingQuotes, setLoadingQuotes] = useState<boolean>(false);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-
-  // Track if initial quotes match current inputs to prevent redundant fetch on back-navigation
-  const initialQuoteWeightKey = useMemo(() => {
-    if (initialQuotes && Object.keys(initialQuotes).length > 0) {
-      return `${applicantData.grossWeightGrams}:${applicantData.netWeightGrams}:${applicantData.karat}`;
-    }
-    return '';
-  }, [applicantData.grossWeightGrams, applicantData.netWeightGrams, applicantData.karat, initialQuotes]);
-
-  const hasInitialRenderedQuotesRef = useRef<boolean>(
-    Boolean(initialQuotes && Object.keys(initialQuotes).length > 0)
-  );
-
-  // Request counter to avoid race conditions
-  const activeRequestIdRef = useRef<number>(0);
-
   // 1. Fetch available active loan schemes on mount if not already provided (BUG-06)
   useEffect(() => {
     let isMounted = true;
@@ -89,7 +56,6 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
         const data = await api.getLoanSchemes();
         if (isMounted) {
           setSchemes(data);
-          // If no plan selected, default to first available scheme
           if (!selectedPlanId && data.length > 0) {
             onSelectPlan(data[0].id);
           }
@@ -111,7 +77,7 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
     };
   }, [schemes.length, selectedPlanId, onSelectPlan]);
 
-  // Synchronize schemes if initialSchemes arrives after initial mount
+  // Synchronize schemes if initialSchemes arrives after mount
   useEffect(() => {
     if (initialSchemes && initialSchemes.length > 0 && schemes.length === 0) {
       setSchemes(initialSchemes);
@@ -122,100 +88,36 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
     }
   }, [initialSchemes, schemes.length, selectedPlanId, onSelectPlan]);
 
-  // 2. Compute debounced live quotes for all schemes via backend API
-  useEffect(() => {
-    const grossNum = parseFloat(debouncedWeights.grossWeight);
-    const netNum = parseFloat(debouncedWeights.netWeight);
-    const currentKarat = debouncedWeights.karat;
-
-    // Validate inputs before triggering network request
-    if (
-      isNaN(grossNum) ||
-      isNaN(netNum) ||
-      grossNum <= 0 ||
-      netNum <= 0 ||
-      netNum > grossNum ||
-      grossNum > 1000 ||
-      netNum > 1000 ||
-      ![18, 22, 24].includes(currentKarat)
-    ) {
-      return;
-    }
-
-    if (schemes.length === 0) {
-      return;
-    }
-
-    const currentWeightKey = `${debouncedWeights.grossWeight}:${debouncedWeights.netWeight}:${debouncedWeights.karat}`;
-    if (
-      hasInitialRenderedQuotesRef.current &&
-      initialQuoteWeightKey === currentWeightKey &&
-      Object.keys(quotesByPlan).length > 0
-    ) {
-      hasInitialRenderedQuotesRef.current = false;
-      return;
-    }
-    hasInitialRenderedQuotesRef.current = false;
-
-    const requestId = ++activeRequestIdRef.current;
-    let isMounted = true;
-
-    async function fetchQuotes() {
-      try {
-        setLoadingQuotes(true);
-        setQuoteError(null);
-
-        // Call POST /api/v1/quotes for each active loan scheme
-        const quotesPromises = schemes.map(async (scheme) => {
-          const quote = await api.getQuote({
-            grossWeightGrams: grossNum,
-            netWeightGrams: netNum,
-            karat: currentKarat,
-            selectedPlanId: scheme.id,
-          });
-          return { schemeId: scheme.id, quote };
-        });
-
-        const results = await Promise.all(quotesPromises);
-
-        // Only commit if this was the most recent request
-        if (isMounted && requestId === activeRequestIdRef.current) {
-          const map: Record<string, QuoteResponse> = {};
-          for (const item of results) {
-            map[item.schemeId] = item.quote;
-          }
-          setQuotesByPlan(map);
-          if (onUpdateWeights) {
-            onUpdateWeights(
-              debouncedWeights.grossWeight,
-              debouncedWeights.netWeight,
-              debouncedWeights.karat
-            );
-          }
-        }
-      } catch (err: any) {
-        if (isMounted && requestId === activeRequestIdRef.current) {
-          setQuoteError(err.message || 'Unable to calculate live quotation.');
-        }
-      } finally {
-        if (isMounted && requestId === activeRequestIdRef.current) {
-          setLoadingQuotes(false);
-        }
-      }
-    }
-
-    fetchQuotes();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [debouncedWeights, schemes, initialQuoteWeightKey]);
+  // 2. Comprehensive Quotes Hook (Handles BUG-01, BUG-05, BUG-07, BUG-08)
+  const {
+    quotesByPlan,
+    loadingQuotes,
+    quoteError,
+    isValid,
+    validationErrors,
+    refetchQuotes,
+  } = useQuotes({
+    grossWeight,
+    netWeight,
+    karat,
+    schemes,
+    initialQuotes,
+    initialApplicantData: applicantData,
+    onUpdateWeights,
+  });
 
   // Derive valuation numbers from active quote (or first available)
   const currentQuote = quotesByPlan[selectedPlanId] || Object.values(quotesByPlan)[0];
 
+  const isProgressionAllowed =
+    isValid &&
+    !loadingQuotes &&
+    !quoteError &&
+    Boolean(selectedPlanId) &&
+    Boolean(quotesByPlan[selectedPlanId]);
+
   const handleProceed = () => {
-    if (selectedPlanId && quotesByPlan[selectedPlanId]) {
+    if (isProgressionAllowed) {
       onUpdateWeights?.(grossWeight, netWeight, karat);
       onNext(selectedPlanId, quotesByPlan);
     }
@@ -268,8 +170,17 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
               inputMode="decimal"
               value={grossWeight}
               onChange={(e) => setGrossWeight(e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-amber-500 focus:outline-none"
+              className={`w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors focus:outline-none ${
+                validationErrors.grossWeight
+                  ? 'border-red-500 bg-red-50/30 focus:border-red-500 focus:ring-1 focus:ring-red-200'
+                  : 'border-slate-300 focus:border-amber-500'
+              }`}
             />
+            {validationErrors.grossWeight && (
+              <p id="step2-gross-error" role="alert" className="text-[10px] text-red-600 mt-0.5 font-medium">
+                {validationErrors.grossWeight}
+              </p>
+            )}
           </div>
 
           {/* Net Weight Input */}
@@ -283,8 +194,17 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
               inputMode="decimal"
               value={netWeight}
               onChange={(e) => setNetWeight(e.target.value)}
-              className="w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 focus:border-amber-500 focus:outline-none"
+              className={`w-full px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors focus:outline-none ${
+                validationErrors.netWeight
+                  ? 'border-red-500 bg-red-50/30 focus:border-red-500 focus:ring-1 focus:ring-red-200'
+                  : 'border-slate-300 focus:border-amber-500'
+              }`}
             />
+            {validationErrors.netWeight && (
+              <p id="step2-net-error" role="alert" className="text-[10px] text-red-600 mt-0.5 font-medium">
+                {validationErrors.netWeight}
+              </p>
+            )}
           </div>
 
           {/* Karat Selector */}
@@ -296,12 +216,21 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
               id="step2-karat"
               value={karat}
               onChange={(e) => setKarat(Number(e.target.value))}
-              className="w-full px-2 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 bg-white focus:border-amber-500 focus:outline-none"
+              className={`w-full px-2 py-1.5 text-xs font-semibold rounded-lg border bg-white transition-colors focus:outline-none ${
+                validationErrors.karat
+                  ? 'border-red-500 bg-red-50/30 focus:border-red-500 focus:ring-1 focus:ring-red-200'
+                  : 'border-slate-300 focus:border-amber-500'
+              }`}
             >
               <option value={18}>18K (75%)</option>
               <option value={22}>22K (91.6%)</option>
               <option value={24}>24K (99.9%)</option>
             </select>
+            {validationErrors.karat && (
+              <p id="step2-karat-error" role="alert" className="text-[10px] text-red-600 mt-0.5 font-medium">
+                {validationErrors.karat}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -346,7 +275,28 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
       ) : (
         <div className="p-5 border border-dashed border-slate-300 rounded-xl text-center text-slate-500 text-xs">
           {quoteError ? (
-            <span className="text-red-600 font-medium">{quoteError}</span>
+            <div className="space-y-2">
+              <span className="text-red-600 font-medium">{quoteError}</span>
+              <div>
+                <button
+                  type="button"
+                  id="retry-quote-btn"
+                  onClick={refetchQuotes}
+                  className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                >
+                  Retry Quote Calculation
+                </button>
+              </div>
+            </div>
+          ) : !isValid ? (
+            <span className="text-amber-800 font-medium">
+              {validationErrors.netWeight ||
+                validationErrors.grossWeight ||
+                validationErrors.karat ||
+                'Enter valid weights to calculate valuation.'}
+            </span>
+          ) : loadingQuotes ? (
+            'Calculating valuation...'
           ) : (
             'Calculating valuation...'
           )}
@@ -466,10 +416,10 @@ export const Step2LiveQuote: React.FC<Step2LiveQuoteProps> = ({
         <button
           type="button"
           id="proceed-to-confirm-btn"
-          disabled={!selectedPlanId || loadingQuotes || !quotesByPlan[selectedPlanId]}
+          disabled={!isProgressionAllowed}
           onClick={handleProceed}
           className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 ${
-            !selectedPlanId || loadingQuotes || !quotesByPlan[selectedPlanId]
+            !isProgressionAllowed
               ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
               : 'bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 cursor-pointer active:scale-[0.99]'
           }`}

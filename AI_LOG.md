@@ -130,7 +130,7 @@ In [`server/src/agent/tools.ts`](file:///d:/projects/gldportal/server/src/agent/
 
 | Test Category | Execution Mechanism | Description | Status |
 |---|---|---|---|
-| **Unit & Integration Tests** | `npm test` / Vitest + Supertest | 88 tests covering financial mathematics, Zod schemas, 400/404/409 error contracts, PostgreSQL sequence IDs, and React components | **88 Passed (100%)** |
+| **Unit & Integration Tests** | `npm test` / Vitest + Supertest | 158 tests (96 server, 62 client across 18 test files) covering financial mathematics, Zod schemas, 400/404/409 error contracts, PostgreSQL sequence IDs, advisory lock concurrency, confirmation invalidation, and React components | **158 Passed (100%)** |
 | **Mocked AI Eval Suite** | `npm run eval` | 5 multi-turn evaluation conversations executing deterministically against `MockGeminiAgent` covering happy path, missing fields, net > gross, 7-day duplicates, and off-topic requests | **5 Passed (100%)** |
 | **Live Gemini API Smoke & Chat** | `npx tsx src/scripts/smoke-gemini.ts` + Chrome Browser Subagent | Real API calls using official `@google/genai` SDK with `GEMINI_API_KEY`. Verified model tool calls (`calculate_quote`, `submit_application`), mobile masking in server logs, and live end-to-end browser submission | **Verified Live** |
 | **Live API Rate Limit Constraint** | Free-tier quota (20 req/day) | When the Google Gemini API free-tier quota is reached (`RESOURCE_EXHAUSTED` 429), the application gracefully falls back to deterministic handling while alerting the developer in logs | **Documented** |

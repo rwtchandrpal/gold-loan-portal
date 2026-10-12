@@ -207,12 +207,14 @@ All bugs discovered and verified during this audit are classified under the foll
   - *Scenario B*: "Can I get a loan against 30 grams?" -> Agent asks for karat purity and weight breakdown.
   - *Scenario C*: "Gross weight is 50 and net is 45." -> Agent prompts for karat purity (18K, 22K, or 24K).
   - *Scenario D*: "What information do you need from me?" -> Agent lists required details (Name, 10-digit mobile, gross weight, net weight, karat, plan).
+  - *Automated Suite*: `server/tests/integration/agent-multiturn.test.ts` (14/14 PASS).
 
 * **TS-AI-05 (Multi-Turn User Corrections & Intent Changes)**:
   - *Scenario A*: "Actually, my net weight is 42 grams." -> Agent updates net weight to 42g, retains gross 50g and 22K, recalculates quote, updates draft version.
   - *Scenario B*: "Change the plan to Bullet." -> Agent switches selected plan to `PLAN_BULLET_01`, updates eligible loan to ₹202,125, updates draft.
   - *Scenario C*: "I want to stop this application." -> Agent acknowledges cancellation and halts submission.
   - *Scenario D*: "Let's start again with a different mobile number." -> Agent clears mobile and requests new number.
+  - *Automated Suite*: `server/tests/integration/agent-multiturn.test.ts` (14/14 PASS).
 
 ---
 
@@ -221,13 +223,14 @@ All bugs discovered and verified during this audit are classified under the foll
 * **TS-SEC-01 (Server-Authoritative Confirmation Card)**:
   - *Expected*: Card renders values directly from server `draftPayload`, never from model-generated text. Displays draft version `v{n}`.
 
-* **TS-SEC-02 (Draft Invalidation on Detail Modification)**:
-  - *Scenario*: User confirms draft v1; subsequently says "Change net weight to 40g".
-  - *Expected*: Server increments draft to v2 and immediately invalidates confirmation (`isConfirmed: false`). Previous confirmation cannot authorize v2.
+* **TS-SEC-02 (Draft Invalidation on Detail Modification - BUG-03 Verified)**:
+  - *Scenario*: User confirms draft v1; subsequently sends a verbal correction such as "Actually, my net weight is 40g".
+  - *Expected*: Server updates net weight, recalculates pure gold and eligible loan, increments draft version exactly once to v2, and strictly invalidates prior confirmation (`isConfirmed: false`, `confirmedDraftVersion: null`). Any submission attempt prior to reconfirming v2 is rejected with `CONFIRMATION_REQUIRED`. Invalid corrections (e.g. net > gross) invalidate confirmation without corrupting draft data. Identical value repetitions do not cause false version increments.
+  - *Automated Suite*: `server/tests/integration/agent-confirmation-invalidation.test.ts` (10/10 PASS).
 
 * **TS-SEC-03 (Replay & Tampering Prevention)**:
-  - *Scenario*: Client submits `POST /api/v1/agent/confirm` with stale `draftVersion: 1` when draft is v2.
-  - *Expected*: HTTP 400 Bad Request with "Draft version mismatch".
+  - *Scenario*: Client submits `POST /api/v1/agent/confirm` with stale `draftVersion: 1` when draft is v2, or submits mismatched arguments via tool calling.
+  - *Expected*: HTTP 400 Bad Request with "Draft version mismatch" / `CONFIRMATION_REQUIRED`. Server state remains authoritative.
 
 * **TS-SEC-04 (Adversarial Prompt Injection & Scope Confinement)**:
   - *Injections Tested*:
