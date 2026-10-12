@@ -1,7 +1,7 @@
 import { pool, prisma } from '../config/db.js';
 
 async function main() {
-  console.log('--- PostgreSQL 18 Verification ---');
+  console.log('--- PostgreSQL Database Verification ---');
   
   // 1. Connection info
   const connRes = await pool.query(
