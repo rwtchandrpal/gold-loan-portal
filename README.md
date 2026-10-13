@@ -1,5 +1,9 @@
 # Gold Loan Portal — With an AI Loan Assist Agent
 
+
+[![Gold-Loan-Portal](https://img.shields.io/badge/Live%20-Demo-CC9900?style=for-the-badge&logoColor=white)](https://gold-loan-portal-ohzu1iavz-cpr8055-3016s-projects.vercel.app/)
+
+
 A production-minded, full-stack gold loan intake portal featuring both a guided 3-step application form and an interactive AI Loan Assist Agent powered by Google Gemini API function calling. Both intake pathways are built on the architectural principle of **"Same Truth, Two Paths"**, sharing identical Zod validation rules, exact financial calculations, and 7-day de-duplication logic.
 
 ---
