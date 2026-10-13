@@ -9,6 +9,7 @@ import type {
   AgentChatResponse,
   AgentConfirmResponse,
 } from '../types/api.js';
+import { buildApiUrl } from '../config/api.js';
 
 export class ApiClientError extends Error {
   public readonly status: number;
@@ -41,7 +42,7 @@ export const api = {
    * Fetches active gold loan schemes from backend.
    */
   async getLoanSchemes(): Promise<LoanScheme[]> {
-    const res = await fetch('/api/v1/loan-schemes');
+    const res = await fetch(buildApiUrl('/api/v1/loan-schemes'));
     const data = await handleResponse<{ schemes: LoanScheme[] }>(res);
     return data.schemes;
   },
@@ -50,7 +51,7 @@ export const api = {
    * Calculates live gold loan quote.
    */
   async getQuote(req: QuoteRequest, signal?: AbortSignal): Promise<QuoteResponse> {
-    const res = await fetch('/api/v1/quotes', {
+    const res = await fetch(buildApiUrl('/api/v1/quotes'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
@@ -63,7 +64,7 @@ export const api = {
    * Submits a confirmed borrower gold loan application.
    */
   async createLead(req: LeadCreationRequest): Promise<LeadCreationResponse> {
-    const res = await fetch('/api/v1/leads', {
+    const res = await fetch(buildApiUrl('/api/v1/leads'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
@@ -76,7 +77,7 @@ export const api = {
    */
   async getLeads(planId?: string): Promise<AdminLead[]> {
     const query = planId ? `?planId=${encodeURIComponent(planId)}` : '';
-    const res = await fetch(`/api/v1/leads${query}`);
+    const res = await fetch(buildApiUrl(`/api/v1/leads${query}`));
     const data = await handleResponse<{ leads: AdminLead[] }>(res);
     return data.leads;
   },
@@ -85,7 +86,7 @@ export const api = {
    * Sends user message to AI Loan Assist Agent.
    */
   async agentChat(req: { sessionId?: string; message: string }): Promise<AgentChatResponse> {
-    const res = await fetch('/api/v1/agent/chat', {
+    const res = await fetch(buildApiUrl('/api/v1/agent/chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
@@ -97,7 +98,7 @@ export const api = {
    * Confirms pending authoritative application draft for submission.
    */
   async agentConfirm(req: { sessionId: string; draftVersion: number }): Promise<AgentConfirmResponse> {
-    const res = await fetch('/api/v1/agent/confirm', {
+    const res = await fetch(buildApiUrl('/api/v1/agent/confirm'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),

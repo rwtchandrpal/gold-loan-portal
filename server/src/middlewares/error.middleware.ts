@@ -30,6 +30,17 @@ export function errorHandler(
     return;
   }
 
+  // Handle CORS Forbidden origin (403)
+  if (typeof err?.message === 'string' && err.message.startsWith('Not allowed by CORS')) {
+    res.status(403).json({
+      error: {
+        code: 'CORS_FORBIDDEN',
+        message: 'Origin not allowed by CORS configuration',
+      },
+    });
+    return;
+  }
+
   // 2. Handle known DuplicateApplicationError (409)
   if (err instanceof DuplicateApplicationError) {
     res.status(err.statusCode).json({

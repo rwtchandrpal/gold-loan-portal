@@ -1,7 +1,9 @@
-import 'dotenv/config';
+import { loadMonorepoEnv } from '../src/config/loadEnv.js';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
+
+loadMonorepoEnv();
 
 const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
 if (!connectionString) {

@@ -5,6 +5,7 @@ node_modules/
 # Build artifacts
 dist/
 build/
+*.tsbuildinfo
 .tsbuildinfo
 
 # Environment variables & secrets
@@ -30,6 +31,10 @@ server/prisma/*.db-journal
 Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# Test coverage
+# Test coverage & database exports
 coverage/
+*.bak
+*.dump

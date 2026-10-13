@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: gold-loan-portal-api
+    env: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run prisma:generate --workspace=server && npm run build --workspace=server
+    startCommand: npm run start --workspace=server
+    # For paid plans supporting preDeployCommand:
+    # preDeployCommand: npm run db:migrate:deploy --workspace=server
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GOLD_RATE_24K
+        value: "7000"

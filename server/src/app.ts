@@ -1,14 +1,22 @@
 import express from 'express';
 import cors from 'cors';
 import { env } from './config/env.js';
+import { parseCorsOrigins, isOriginAllowed } from './config/cors.js';
 import { apiRouter } from './routes/api.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 
 export const app = express();
 
+const allowedOrigins = parseCorsOrigins(env.CORS_ORIGIN);
+
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: (requestOrigin, callback) => {
+      if (isOriginAllowed(requestOrigin, allowedOrigins)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: ${requestOrigin}`));
+    },
     credentials: true,
   })
 );

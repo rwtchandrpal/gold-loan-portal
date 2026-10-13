@@ -1,5 +1,17 @@
-import 'dotenv/config';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
 import { defineConfig, env } from 'prisma/config';
+
+// Deterministically load canonical root .env file
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const rootEnvPath = path.resolve(currentDir, '..', '.env');
+if (fs.existsSync(rootEnvPath)) {
+  dotenv.config({ path: rootEnvPath });
+} else {
+  dotenv.config();
+}
 
 const isProduction = process.env.NODE_ENV === 'production';
 const directUrl = process.env.DIRECT_URL?.trim();

@@ -91,12 +91,12 @@ psql -U postgres -c "CREATE DATABASE gold_loan_portal OWNER goldloan_dev;"
 psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE gold_loan_portal TO goldloan_dev;"
 ```
 
-### Step 3.3: Configure Server Environment Variables
-Copy the example environment file:
+### Step 3.3: Configure Root Environment Variables
+The repository uses a single canonical root `.env` file for local development. Copy the template from the monorepo root:
 ```bash
-cp server/.env.example server/.env
+cp .env.example .env
 ```
-Open `server/.env` and update `DATABASE_URL` with your local credentials:
+Open `.env` and verify or update your local configuration:
 ```env
 # Server Configuration
 PORT=4000
@@ -111,9 +111,13 @@ GOLD_RATE_24K=7000
 
 # Google Gemini API Key (Server-Side Only)
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+
+# Frontend Client Configuration (Vite)
+VITE_API_BASE_URL=http://localhost:4000
 ```
 
-> **Security Rule**: Credentials are read exclusively from server-side environment variables. Real `.env` files are ignored by Git (`.gitignore`) and must never be committed.
+> **Security Rule**: The root `.env` is the single canonical local configuration file. Real `.env` files and credentials are excluded by Git (`.gitignore`) and must never be committed. In cloud deployments (Render and Vercel), environment variables are supplied directly through their respective platform dashboards.
 
 ### Step 3.4: Apply Versioned Schema Migrations
 Run Prisma Migrate from the monorepo root:
@@ -171,11 +175,17 @@ Executes Vitest across backend (unit, integration, and Supertest suites) and fro
 | Script | Purpose |
 |---|---|
 | `npm run dev` | Runs backend (port 4000) and frontend (port 5173) concurrently |
-| `npm test` | Runs all Vitest unit, integration, and component tests |
+| `npm test` | Runs all Vitest unit, integration, and component tests across workspaces |
 | `npm run build` | Builds frontend production assets and compiles backend TypeScript |
-| `npm run db:migrate` | Runs versioned Prisma migrations against PostgreSQL (`prisma migrate dev`) |
+| `npm run build:server` | Compiles backend TypeScript (`tsc`) |
+| `npm run build:client` | Compiles frontend React/Vite assets to `client/dist` |
+| `npm run start:server` | Starts the compiled production backend server (`node dist/index.js`) |
+| `npm run db:migrate` | Runs Prisma development migrations against local PostgreSQL (`prisma migrate dev`) |
+| `npm run db:migrate:deploy` | Applies pending migrations in production using `DIRECT_URL` (`prisma migrate deploy`) |
 | `npm run db:seed` | Seeds database idempotently with loan schemes and sequence |
+| `npm run db:verify` | Verifies PostgreSQL connection, tables, sequence, and seeded schemes |
 | `npm run db:studio` | Launches Prisma Studio GUI at `http://localhost:5555` |
+| `npm run eval` | Runs the 5 mandatory AI agent evaluation conversation test suite |
 | `npm run db:up` | *(Optional/Bonus B4)* Starts PostgreSQL 18 container if Docker is used |
 | `npm run db:down` | *(Optional/Bonus B4)* Stops containerized PostgreSQL |
 
@@ -256,24 +266,95 @@ docker compose down
 
 ---
 
-## 10. Future Enhancements ("What you'd do with more time")
+## 10. Production Deployment Guide (Render Backend & Vercel Frontend)
 
-1. **Production Concurrency Hardening (Bonus B1)**: Deploy PostgreSQL transactional advisory locks (`pg_advisory_xact_lock`) on hashed mobile numbers to ensure atomic check-and-insert under high concurrent load.
-2. **Real-Time Live Gold Price Ingestion**: Integrate Indian Bullion and Jewellers Association (IBJA) or Metalprice API with in-memory Redis caching and 60-second TTL fallback.
-3. **Appraisal Slip Multimodal OCR (Bonus B3)**: Allow applicants to upload appraisal receipts to auto-extract gross weight, net weight, and hallmark karat via Gemini Multimodal.
-4. **SMS OTP Verification**: Enforce Indian mobile verification via Twilio/Gupshup before application finalization.
-5. **Role-Based Admin Access**: Add JWT/OAuth2 role-based authentication to `GET /api/v1/leads` with audit trails.
+This repository supports three deployment scenarios from a single unified GitHub repository:
+
+### Scenario 1: Local Development
+* **Environment file**: Single canonical root `.env` (copied from `.env.example`).
+* **Database**: Native PostgreSQL 18 on Windows (`localhost:5432`) or containerized via Docker.
+* **Backend**: Express API on port 4000.
+* **Frontend**: Vite dev server on port 5173, reading `VITE_API_BASE_URL=http://localhost:4000` from the root `.env`.
+* **Execution**: Single root command `npm run dev`.
 
 ---
 
-## 11. Deliverables & Documentation Index
+### Scenario 2: Backend Deployment on Render (Web Service)
+Deploy the Express API as a Node.js Web Service on [Render](https://render.com) using Neon PostgreSQL:
+
+1. **Repository Settings**:
+   * **Root Directory**: `.` (repository root)
+   * **Environment**: `Node`
+   * **Build Command**: `npm ci --include=dev && npm run prisma:generate --workspace=server && npm run build --workspace=server`
+   * **Start Command**: `npm run start --workspace=server`
+   * **Pre-Deploy Command** (for database migrations): `npm run db:migrate:deploy --workspace=server`
+2. **Render Environment Variables**:
+   Configure in Render Dashboard (**Environment** tab):
+
+| Variable | Value / Notes | Required? |
+|---|---|---|
+| `NODE_ENV` | `production` | Yes |
+| `PORT` | *(Provided dynamically by Render, e.g. 10000)* | Auto-injected |
+| `DATABASE_URL` | Neon pooled connection string (`sslmode=require`) | Yes |
+| `DIRECT_URL` | Neon direct unpooled connection string (`sslmode=require`) | Yes (for migrations) |
+| `CORS_ORIGIN` | Your deployed Vercel frontend URL (e.g. `https://gold-loan-portal.vercel.app`) | Yes |
+| `GOLD_RATE_24K` | `7000` | Yes |
+| `GEMINI_API_KEY` | Your Google Gemini API key | Yes |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Optional (default) |
+
+> **Note**: A Blueprint specification [`render.yaml`](file:///d:/projects/gldportal/render.yaml) is included in the repository root for automated infrastructure-as-code setup.
+
+---
+
+### Scenario 3: Frontend Deployment on Vercel
+Deploy the React/Vite single-page application on [Vercel](https://vercel.com):
+
+1. **Project Import Settings**:
+   * **Framework Preset**: `Vite`
+   * **Root Directory**: `.` (repository root)
+   * **Build Command**: `npm run build --workspace=client`
+   * **Output Directory**: `client/dist`
+   * **Install Command**: `npm install`
+2. **Vercel Environment Variables**:
+   Configure in Vercel Project Settings (**Environment Variables**):
+
+| Variable | Value / Notes | Required? |
+|---|---|---|
+| `VITE_API_BASE_URL` | Your deployed Render backend URL (e.g. `https://gold-loan-api.onrender.com`) | Yes |
+
+3. **Production Isolation Safeguards**:
+   * Vercel builds receive **only** variables prefixed with `VITE_`.
+   * Server-only secrets (`DATABASE_URL`, `DIRECT_URL`, `GEMINI_API_KEY`) are completely absent from client bundles.
+   * A build-time check in `vite.config.ts` prevents accidental deployments targeting `localhost`.
+   * Single-page routing rewrites are configured in [`vercel.json`](file:///d:/projects/gldportal/vercel.json).
+
+---
+
+## 11. Environment Variables Matrix
+
+| Variable | Scope | Local Default | Render Backend | Vercel Frontend |
+|---|---|---|---|---|
+| `PORT` | Backend | `4000` | Injected by Render | N/A |
+| `NODE_ENV` | Backend | `development` | `production` | N/A |
+| `CORS_ORIGIN` | Backend | `http://localhost:5173` | Vercel URL (`https://...`) | N/A |
+| `DATABASE_URL` | Backend | `postgresql://...localhost:5432` | Neon Pooled URL | N/A |
+| `DIRECT_URL` | Backend | *(Optional locally)* | Neon Direct URL | N/A |
+| `GOLD_RATE_24K` | Backend | `7000` | `7000` | N/A |
+| `GEMINI_API_KEY` | Backend | Local developer key | Production Gemini key | N/A |
+| `GEMINI_MODEL` | Backend | `gemini-2.5-flash` | `gemini-2.5-flash` | N/A |
+| `VITE_API_BASE_URL` | Frontend | `http://localhost:4000` | N/A | Render Backend URL (`https://...`) |
+
+---
+
+## 12. Deliverables & Documentation Index
 
 | File | Purpose |
 |---|---|
-| [`README.md`](file:///d:/projects/gldportal/README.md) | Complete project overview, architecture, native PostgreSQL 18 setup, and script reference |
+| [`README.md`](file:///d:/projects/gldportal/README.md) | Complete project overview, architecture, native PostgreSQL 18 setup, and deployment guides |
 | [`AI_LOG.md`](file:///d:/projects/gldportal/AI_LOG.md) | AI tooling log, two exact prompts, and genuine AI mistake with automated regression test |
 | [`.env.example`](file:///d:/projects/gldportal/.env.example) | Root environment configuration template with zero committed credentials |
-| [`server/.env.example`](file:///d:/projects/gldportal/server/.env.example) | Server-specific environment template with PostgreSQL and Gemini settings |
+| [`vercel.json`](file:///d:/projects/gldportal/vercel.json) | Vercel monorepo configuration for frontend build and SPA routing |
+| [`render.yaml`](file:///d:/projects/gldportal/render.yaml) | Render Blueprint configuration for backend web service deployment |
 | [`docs/requirements-matrix.md`](file:///d:/projects/gldportal/docs/requirements-matrix.md) | Requirements traceability matrix mapped directly to the 8-page assignment PDF |
 | [`docs/implementation-plan.md`](file:///d:/projects/gldportal/docs/implementation-plan.md) | Phased engineering implementation blueprint and gating record |
 | [`docs/requirements.md`](file:///d:/projects/gldportal/docs/requirements.md) | Complete business rules, financial precision standards, and API specifications |
